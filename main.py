@@ -55,6 +55,7 @@ class SimplePythonIDE:
         self.acl = None
         self.work_dir = None
         self.scroll_lock = False
+        self.last_line_count = 0
 
     def _le(self):
         ef = "error_translations.json"
@@ -119,9 +120,9 @@ class SimplePythonIDE:
         self.root.bind('<KeyRelease>', self._hc_d)
         self.root.bind('<KeyPress>', self._ah)
         self.root.bind('<KeyRelease>', self._uln)
-        self.root.bind('<MouseWheel>', self._uln)
-        self.root.bind('<Button-1>', self._uln)
-        self.root.bind('<Configure>', self._uln)
+        self.root.bind('<MouseWheel>', self._onscroll)
+        self.root.bind('<Button-1>', self._onscroll)
+        self.root.bind('<Configure>', self._onscroll)
 
     def _cm(self):
         self.mb = tk.Menu(self.root)
@@ -154,7 +155,7 @@ class SimplePythonIDE:
         self.tm.add_command(label="编译选项", command=lambda: self.tt(1))
         self.mb.add_cascade(label="工具", menu=self.tm)
         self.hm = tk.Menu(self.mb, tearoff=0)
-        self.hm.add_command(label="打开官网", command=lambda: webbrowser.open("https://github.com/fuzhiyin-7/-7'sIDE"))
+        self.hm.add_command(label="打开官网", command=lambda: webbrowser.open("https://github.com/fuzhiyin-7/IDE"))
         self.mb.add_cascade(label="帮助", menu=self.hm)
         self.root.bind("<Control-z>", lambda e: self.undo())
         self.root.bind("<Control-y>", lambda e: self.redo())
@@ -330,9 +331,9 @@ class SimplePythonIDE:
         self.lnb.configure(yscrollcommand=lambda *args: vsb.set(*args))
         self.ce.bind('<KeyRelease>', self._uln)
         self.ce.bind('<KeyPress>', self._ah)
-        self.ce.bind('<MouseWheel>', self._uln)
-        self.ce.bind('<Button-1>', self._uln)
-        self.ce.bind('<Configure>', self._uln)
+        self.ce.bind('<MouseWheel>', self._onscroll)
+        self.ce.bind('<Button-1>', self._onscroll)
+        self.ce.bind('<Configure>', self._onscroll)
         self.ce.bind('<KeyRelease>', self._hc_d)
         self.ce.insert(tk.END, "欢迎使用Python IDE！\n\n功能说明：\n1. 支持Python代码编辑和运行\n2. 支持文件资源管理器\n3. 支持库管理和编译选项\n\n请从文件开始使用...")
 
@@ -355,11 +356,25 @@ class SimplePythonIDE:
         if not self.ce.winfo_exists():
             return
         lc = int(self.ce.index('end-1c').split('.')[0])
+        if lc == self.last_line_count:
+            self._hc_d()
+            return
+        self.last_line_count = lc
         lns = "\n".join(str(i) for i in range(1, lc + 1))
         self.lnb.config(state="normal")
         self.lnb.delete("1.0", tk.END)
         self.lnb.insert("1.0", lns)
         self.lnb.config(state="disabled")
+        self._hc_d()
+
+    def _onscroll(self, e=None):
+        if not self.ce.winfo_exists():
+            return
+        if not self.scroll_lock:
+            self.scroll_lock = True
+            pos = self.ce.yview()[0]
+            self.lnb.yview_moveto(pos)
+            self.scroll_lock = False
         self._hc_d()
 
     def ofd(self):

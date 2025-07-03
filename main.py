@@ -2,912 +2,771 @@ import tkinter as tk
 from tkinter import scrolledtext, filedialog, messagebox, ttk
 import subprocess
 import sys
-from threading import Thread, Lock
-from queue import Queue, Empty
+from threading import Thread
 import os
 import shutil
 import re
 import queue
 import threading
-from typing import Optional, Tuple, Dict, List, Pattern
 import keyword
 from pathlib import Path
 import json
 import platform
+import webbrowser
 
 class SimplePythonIDE:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.root.title("-7的全新Python IDE")
-        self.current_folder = None
-        self.current_file_path = None
-        self.line_number_bar = None
-        self.theme_mode = "light"
-        self.highlight_patterns = [
-            (r'\b(%s)\b' % '|'.join(keyword.kwlist), 'keyword'),
-            (r'\b(True|False|None)\b', 'constant'),
-            (r'#[^\n]*', 'comment'),
-            (r'"[^"]*"', 'string'),
-            (r"'[^']*'", 'string'),
-            (r'\b\d+\b', 'number'),
+        self.cf = None
+        self.cfp = None
+        self.lnb = None
+        self.hp = [
+            (r'\b(%s)\b' % '|'.join(keyword.kwlist), 'kw'),
+            (r'\b(True|False|None)\b', 'con'),
+            (r'\b\d+\b', 'num'),
+            (r'#[^\n]*', 'com'),
+            (r'"(?:[^"\\]|\\.)*"', 'str'),
+            (r"'(?:[^'\\]|\\.)*'", 'str'),
         ]
-        self.tag_config = {
-            'keyword': {'foreground': 'purple'},
-            'constant': {'foreground': 'orange'},
-            'comment': {'foreground': 'green'},
-            'string': {'foreground': 'red'},
-            'number': {'foreground': 'blue'},
-            'error': {'background': 'red', 'foreground': 'white'},
+        self.tc = {
+            'kw': {'foreground': '#800080'},
+            'con': {'foreground': '#FFA500'},
+            'com': {'foreground': '#008000'},
+            'str': {'foreground': '#FF0000'},
+            'num': {'foreground': '#0000FF'},
+            'err': {'background': '#FF0000', 'foreground': '#FFFFFF'},
         }
-        self.autocomplete_words = list(keyword.kwlist) + dir(__builtins__)
-        self.error_mapping = self._load_error_translations()
-        self.process = None
-        self.output_queue = Queue()
-        self.progress_lock = Lock()
-        self.packager = PackageHelper(self)
-        self.compile_window = None
-        self.pkg_mgr_window = None
-        self.fullscreen = False
+        self.acw = list(keyword.kwlist) + dir(__builtins__)
+        self.em = self._le()
+        self.p = None
+        self.oq = queue.Queue()
+        self.pl = threading.Lock()
+        self.ph = PackageHelper(self)
+        self.cw = None
+        self.pmw = None
         self.style = ttk.Style()
-        self._setup_ui()
-        self._init_highlight_tags()
-        self._apply_theme()
-        self.root.bind("<F11>", self.toggle_fullscreen)
-        self.root.bind("<Escape>", self.exit_fullscreen)
-        self.root.minsize(800, 600)  # 设置最小窗口尺寸
+        self._su()
+        self._iht()
+        self.root.bind("<F5>", lambda e: self.rc())
+        self.root.minsize(800, 600)
+        self.tp_visible = False
+        self.hc_timer = None
+        self.acl = None
+        self.work_dir = None
+        self.scroll_lock = False
 
-    def toggle_fullscreen(self, event=None):
-        self.fullscreen = not self.fullscreen
-        self.root.attributes("-fullscreen", self.fullscreen)
-        return "break"
-
-    def exit_fullscreen(self, event=None):
-        self.fullscreen = False
-        self.root.attributes("-fullscreen", False)
-        return "break"
-
-    def _load_error_translations(self):
-        err_file = "error_translations.json"
-        def_mapping = {
-            "SyntaxError": "语法错误",
-            "NameError": "名称错误（变量未定义）",
-            "TypeError": "类型错误",
-            "ValueError": "值错误",
-            "IndexError": "索引错误（超出范围）",
-            "KeyError": "键错误（字典键不存在）",
-            "AttributeError": "属性错误（对象没有该属性）",
-            "ImportError": "导入错误（模块未找到）",
-            "ModuleNotFoundError": "模块未找到错误",
-            "FileNotFoundError": "文件未找到错误",
-            "PermissionError": "权限错误",
-            "ZeroDivisionError": "除零错误",
-            "IndentationError": "缩进错误",
-            "TabError": "制表符错误",
-            "UnboundLocalError": "局部变量未绑定错误",
-            "RuntimeError": "运行时错误",
-            "RecursionError": "递归错误（递归深度过大）"
+    def _le(self):
+        ef = "error_translations.json"
+        dm = {
+            "SyntaxError": "语法错误: 代码不符合Python语法规则",
+            "NameError": "名称错误: 使用了未定义的变量或函数",
+            "TypeError": "类型错误: 操作或函数应用于不适当类型的对象",
+            "ValueError": "值错误: 传入无效值",
+            "IndexError": "索引错误: 序列下标超出范围",
+            "KeyError": "键错误: 字典中不存在该键",
+            "AttributeError": "属性错误: 对象没有该属性",
+            "ImportError": "导入错误: 导入模块/对象失败",
+            "ModuleNotFoundError": "模块未找到: 无法找到指定模块",
+            "FileNotFoundError": "文件未找到: 找不到指定文件或目录",
+            "PermissionError": "权限错误: 没有足够权限执行该操作",
+            "ZeroDivisionError": "除零错误: 除数不能为零",
+            "IndentationError": "缩进错误: 缩进不正确",
+            "TabError": "制表符错误: 制表符和空格混用",
+            "UnboundLocalError": "局部变量未绑定: 在赋值前引用了局部变量",
+            "RuntimeError": "运行时错误: 一般运行时错误",
+            "RecursionError": "递归错误: 超出最大递归深度",
+            "KeyboardInterrupt": "键盘中断: 用户中断执行(Ctrl+C)",
+            "MemoryError": "内存错误: 内存不足",
+            "OverflowError": "溢出错误: 数值运算超出最大限制",
+            "NotImplementedError": "未实现错误: 功能尚未实现",
+            "AssertionError": "断言错误: 断言语句失败",
+            "StopIteration": "迭代停止: 迭代器没有更多值",
+            "GeneratorExit": "生成器退出: 生成器被关闭",
+            "SystemError": "系统错误: 解释器内部错误",
+            "OSError": "操作系统错误: 系统相关错误",
+            "Warning": "警告: 非致命警告"
         }
         try:
-            if os.path.exists(err_file):
-                with open(err_file, 'r', encoding='utf-8') as f:
+            if os.path.exists(ef):
+                with open(ef, 'r', encoding='utf-8') as f:
                     return json.load(f)
             else:
-                with open(err_file, 'w', encoding='utf-8') as f:
-                    json.dump(def_mapping, f, ensure_ascii=False, indent=2)
-                return def_mapping
-        except Exception as e:
-            print(f"加载错误翻译失败: {str(e)}")
-            return def_mapping
+                with open(ef, 'w', encoding='utf-8') as f:
+                    json.dump(dm, f, ensure_ascii=False, indent=2)
+                return dm
+        except Exception:
+            return dm
 
-    def _setup_ui(self):
-        self._create_menu()
-        
-        # 主布局框架
-        self.main_frame = ttk.Frame(self.root)
-        self.main_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        # 垂直分割窗 (顶部编辑器 + 底部工具)
-        self.main_paned = ttk.PanedWindow(self.main_frame, orient=tk.VERTICAL)
-        self.main_paned.pack(fill=tk.BOTH, expand=True)
-        
-        # 顶部框架 (包含文件树和编辑器)
-        self.top_frame = ttk.Frame(self.main_paned)
-        self.main_paned.add(self.top_frame, weight=3)  # 编辑器区域权重更大
-        
-        # 水平分割窗 (左侧文件树 + 右侧编辑器)
-        self.top_paned = ttk.PanedWindow(self.top_frame, orient=tk.HORIZONTAL)
-        self.top_paned.pack(fill=tk.BOTH, expand=True)
-        
-        # 文件树区域
-        self.file_tree_frame = ttk.LabelFrame(self.top_paned, text="文件资源管理器", width=200)
-        self.top_paned.add(self.file_tree_frame, weight=1)
-        self._create_file_tree()
-        
-        # 编辑器区域
-        self.editor_frame = ttk.Frame(self.top_paned)
-        self.top_paned.add(self.editor_frame, weight=5)  # 编辑器区域权重更大
-        self._create_code_editor()
-        
-        # 按钮区域
-        self.button_frame = ttk.Frame(self.top_frame)
-        self.button_frame.pack(fill=tk.X, pady=5)
-        self._create_button_frame()
-        
-        # 工具区域
-        self.tool_frame = ttk.LabelFrame(self.main_paned, text="工具面板")
-        self.main_paned.add(self.tool_frame, weight=1)  # 工具区域权重较小
-        self._create_tool_notebook()
-        
-        # 绑定编辑器事件
-        self.code_editor.bind('<KeyRelease>', self._highlight_code)
-        self.code_editor.bind('<KeyPress>', self._autocomplete_handler)
-        self.code_editor.bind('<KeyRelease>', self._update_line_numbers)
-        self.code_editor.bind('<MouseWheel>', self._update_line_numbers)
-        self.code_editor.bind('<Button-1>', self._update_line_numbers)
-        self.code_editor.bind('<Configure>', self._update_line_numbers)
+    def _su(self):
+        self._cm()
+        self.mf = ttk.Frame(self.root)
+        self.mf.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.mp = ttk.PanedWindow(self.mf, orient=tk.VERTICAL)
+        self.mp.pack(fill=tk.BOTH, expand=True)
+        self.tf = ttk.Frame(self.mp)
+        self.mp.add(self.tf, weight=3)
+        self.tp = ttk.PanedWindow(self.tf, orient=tk.HORIZONTAL)
+        self.tp.pack(fill=tk.BOTH, expand=True)
+        self.ftf = ttk.LabelFrame(self.tp, text="文件资源管理器", width=200)
+        self.tp.add(self.ftf, weight=1)
+        self._cf()
+        self.efr = ttk.Frame(self.tp)
+        self.tp.add(self.efr, weight=5)
+        self._cce()
+        self.tfr = ttk.LabelFrame(self.mp, text="工具面板")
+        self.tfr.pack_forget()
+        self.root.bind('<KeyRelease>', self._hc_d)
+        self.root.bind('<KeyPress>', self._ah)
+        self.root.bind('<KeyRelease>', self._uln)
+        self.root.bind('<MouseWheel>', self._uln)
+        self.root.bind('<Button-1>', self._uln)
+        self.root.bind('<Configure>', self._uln)
 
-    def _create_menu(self):
-        self.menu_bar = tk.Menu(self.root)
-        self.root.config(menu=self.menu_bar)
-        self.file_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.file_menu.add_command(label="打开文件", command=self.open_file)
-        self.file_menu.add_command(label="打开文件夹", command=self.open_folder)
-        self.file_menu.add_command(label="保存", command=self.save_file)
-        self.file_menu.add_command(label="另存为", command=self.save_file_as)
-        self.file_menu.add_separator()
-        self.file_menu.add_command(label="退出", command=self.root.quit)
-        self.menu_bar.add_cascade(label="文件", menu=self.file_menu)
-        self.theme_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.theme_menu.add_command(label="浅色主题", command=lambda: self.switch_theme("light"))
-        self.theme_menu.add_command(label="深色主题", command=lambda: self.switch_theme("dark"))
-        self.menu_bar.add_cascade(label="主题", menu=self.theme_menu)
-        self.tools_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.tools_menu.add_command(label="库管理器", command=lambda: self.tool_notebook.select(0))
-        self.tools_menu.add_command(label="编译选项", command=lambda: self.tool_notebook.select(1))
-        self.menu_bar.add_cascade(label="工具", menu=self.tools_menu)
-        self.view_menu = tk.Menu(self.menu_bar, tearoff=0)
-        self.view_menu.add_command(label="全屏 (F11)", command=self.toggle_fullscreen)
-        self.view_menu.add_command(label="退出全屏 (Esc)", command=self.exit_fullscreen)
-        self.menu_bar.add_cascade(label="视图", menu=self.view_menu)
+    def _cm(self):
+        self.mb = tk.Menu(self.root)
+        self.root.config(menu=self.mb)
+        self.fm = tk.Menu(self.mb, tearoff=0)
+        self.fm.add_command(label="打开文件", command=self.of)
+        self.fm.add_command(label="打开文件夹", command=self.ofd)
+        self.fm.add_command(label="保存", command=self.sf)
+        self.fm.add_command(label="另存为", command=self.sfa)
+        self.fm.add_command(label="设置工作目录", command=self.set_work_dir)
+        self.fm.add_separator()
+        self.fm.add_command(label="退出", command=self.root.quit)
+        self.mb.add_cascade(label="文件", menu=self.fm)
+        self.em = tk.Menu(self.mb, tearoff=0)
+        self.em.add_command(label="撤销", command=self.undo, accelerator="Ctrl+Z")
+        self.em.add_command(label="重做", command=self.redo, accelerator="Ctrl+Y")
+        self.em.add_separator()
+        self.em.add_command(label="剪切", command=self.cut, accelerator="Ctrl+X")
+        self.em.add_command(label="复制", command=self.copy, accelerator="Ctrl+C")
+        self.em.add_command(label="粘贴", command=self.paste, accelerator="Ctrl+V")
+        self.em.add_separator()
+        self.em.add_command(label="全选", command=self.select_all, accelerator="Ctrl+A")
+        self.em.add_command(label="查找", command=self.find_text, accelerator="Ctrl+F")
+        self.mb.add_cascade(label="编辑", menu=self.em)
+        self.rm = tk.Menu(self.mb, tearoff=0)
+        self.rm.add_command(label="运行 (F5)", command=self.rc)
+        self.mb.add_cascade(label="运行", menu=self.rm)
+        self.tm = tk.Menu(self.mb, tearoff=0)
+        self.tm.add_command(label="库管理器", command=lambda: self.tt(0))
+        self.tm.add_command(label="编译选项", command=lambda: self.tt(1))
+        self.mb.add_cascade(label="工具", menu=self.tm)
+        self.hm = tk.Menu(self.mb, tearoff=0)
+        self.hm.add_command(label="打开官网", command=lambda: webbrowser.open("https://github.com/fuzhiyin-7/IDE"))
+        self.mb.add_cascade(label="帮助", menu=self.hm)
+        self.root.bind("<Control-z>", lambda e: self.undo())
+        self.root.bind("<Control-y>", lambda e: self.redo())
+        self.root.bind("<Control-x>", lambda e: self.cut())
+        self.root.bind("<Control-c>", lambda e: self.copy())
+        self.root.bind("<Control-v>", lambda e: self.paste())
+        self.root.bind("<Control-a>", lambda e: self.select_all())
+        self.root.bind("<Control-f>", lambda e: self.find_text())
 
-    def _create_tool_notebook(self):
-        self.tool_notebook = ttk.Notebook(self.tool_frame)
-        self.tool_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        self._create_pkg_manager_tab()
-        self._create_compile_tab()
+    def set_work_dir(self):
+        wd = filedialog.askdirectory()
+        if wd:
+            self.work_dir = wd
+            messagebox.showinfo("工作目录设置", f"工作目录已设置为:\n{wd}")
 
-    def _create_pkg_manager_tab(self):
-        pkg_frame = ttk.Frame(self.tool_notebook)
-        self.tool_notebook.add(pkg_frame, text="库管理器")
-        
-        # 系统信息
-        info_frame = ttk.LabelFrame(pkg_frame, text="系统信息")
-        info_frame.pack(fill=tk.X, padx=5, pady=5)
-        ttk.Label(info_frame, text=f"Python版本: {platform.python_version()}").pack(anchor=tk.W)
-        ttk.Label(info_frame, text=f"工作目录: {os.getcwd()}").pack(anchor=tk.W)
-        
-        # 镜像源
-        mirror_frame = ttk.LabelFrame(pkg_frame, text="镜像源")
-        mirror_frame.pack(fill=tk.X, padx=5, pady=5)
-        self.mirror_var = tk.StringVar()
-        mirrors = [
-            ("官方源", "https://pypi.org/simple/"),
-            ("阿里云", "https://mirrors.aliyun.com/pypi/simple/"),
-            ("清华大学", "https://pypi.tuna.tsinghua.edu.cn/simple/"),
-            ("中科大", "https://pypi.mirrors.ustc.edu.cn/simple/"),
-            ("华为云", "https://mirrors.huaweicloud.com/repository/pypi/simple/")
-        ]
-        for name, url in mirrors:
-            ttk.Radiobutton(mirror_frame, text=name, variable=self.mirror_var, value=url).pack(anchor=tk.W)
-        self.mirror_var.set(mirrors[0][1])
-        
-        # 包管理
-        pkg_frame_inner = ttk.LabelFrame(pkg_frame, text="包管理")
-        pkg_frame_inner.pack(fill=tk.X, padx=5, pady=5)
-        ttk.Label(pkg_frame_inner, text="包名 (多个用空格分隔):").pack(anchor=tk.W)
-        self.pkg_entry = ttk.Entry(pkg_frame_inner)
-        self.pkg_entry.pack(fill=tk.X, padx=5, pady=5)
-        
-        # 按钮区域
-        btn_frame = ttk.Frame(pkg_frame_inner)
-        btn_frame.pack(fill=tk.X, pady=5)
-        ttk.Button(btn_frame, text="检测pip更新", command=self.check_pip_update).pack(side=tk.LEFT, padx=2)
-        ttk.Button(btn_frame, text="更新pip", command=self.update_pip).pack(side=tk.LEFT, padx=2)
-        ttk.Button(btn_frame, text="安装", command=self.install_pkgs).pack(side=tk.LEFT, padx=2)
-        
-        # 输出区域
-        output_frame = ttk.LabelFrame(pkg_frame, text="输出")
-        output_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        self.output_text = scrolledtext.ScrolledText(output_frame, height=8)
-        self.output_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        self.output_text.config(state=tk.DISABLED)
+    def tt(self, idx):
+        if not self.tp_visible:
+            self.mp.add(self.tfr, weight=1)
+            self.tp_visible = True
+        self.tn.select(idx)
 
-    def _create_compile_tab(self):
-        compile_frame = ttk.Frame(self.tool_notebook)
-        self.tool_notebook.add(compile_frame, text="编译选项")
-        
-        # 编译选项
-        options_frame = ttk.LabelFrame(compile_frame, text="编译选项")
-        options_frame.pack(fill=tk.X, padx=5, pady=5)
-        
-        ttk.Label(options_frame, text="选择编译方式:").pack(anchor=tk.W)
-        
-        btn_frame = ttk.Frame(options_frame)
-        btn_frame.pack(fill=tk.X, pady=5)
-        
-        run_btn = ttk.Button(
-            btn_frame, 
-            text="直接运行", 
-            command=lambda: self.run_code(do_compile=False),
-            width=12
-        )
-        run_btn.pack(side=tk.LEFT, padx=5)
-        
-        exe_btn = ttk.Button(
-            btn_frame, 
-            text="编译为EXE", 
-            command=lambda: self.packager.package("exe"),
-            width=12
-        )
-        exe_btn.pack(side=tk.LEFT, padx=5)
-        
-        other_btn = ttk.Button(
-            btn_frame, 
-            text="其他格式(开发中)", 
-            state=tk.DISABLED,
-            width=12
-        )
-        other_btn.pack(side=tk.LEFT, padx=5)
-        
-        # 打包进度
-        progress_frame = ttk.LabelFrame(compile_frame, text="打包进度")
-        progress_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        self.progress_bar = ttk.Progressbar(
-            progress_frame,
-            orient=tk.HORIZONTAL,
-            mode='determinate',
-            maximum=100
-        )
-        self.progress_bar.pack(fill=tk.X, padx=10, pady=5)
-        
-        self.stage_label = ttk.Label(
-            progress_frame, 
-            text="当前阶段：未开始"
-        )
-        self.stage_label.pack(anchor=tk.W, padx=10)
-        
-        # 日志输出
-        log_frame = ttk.LabelFrame(progress_frame, text="日志输出")
-        log_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
-        self.log_area = scrolledtext.ScrolledText(
-            log_frame,
-            wrap=tk.WORD,
-            height=6
-        )
-        self.log_area.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        self.log_area.config(state='disabled')
+    def tc_hide(self):
+        if self.tp_visible:
+            self.mp.forget(self.tfr)
+            self.tp_visible = False
 
-    def check_pip_update(self):
-        self._run_cmd([sys.executable, "-m", "pip", "list", "--outdated"], "检测更新")
+    def _ctn(self):
+        top_frame = ttk.Frame(self.tfr)
+        top_frame.pack(fill=tk.X, pady=5)
+        ttk.Button(top_frame, text="×", command=self.tc_hide, width=2).pack(side=tk.RIGHT, padx=5)
+        self.tn = ttk.Notebook(self.tfr)
+        self.tn.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self._cpmt()
+        self._cct()
 
-    def install_pkgs(self):
-        pkgs = self.pkg_entry.get().strip()
-        if not pkgs:
+    def _cpmt(self):
+        pmf = ttk.Frame(self.tn)
+        self.tn.add(pmf, text="库管理器")
+        ifr = ttk.LabelFrame(pmf, text="系统信息")
+        ifr.pack(fill=tk.X, padx=5, pady=5)
+        ttk.Label(ifr, text=f"Python版本: {platform.python_version()}").pack(anchor=tk.W)
+        ttk.Label(ifr, text=f"工作目录: {os.getcwd()}").pack(anchor=tk.W)
+        mf = ttk.LabelFrame(pmf, text="镜像源")
+        mf.pack(fill=tk.X, padx=5, pady=5)
+        self.mv = tk.StringVar()
+        ms = [("官方源","https://pypi.org/simple/"),("阿里云","https://mirrors.aliyun.com/pypi/simple/"),
+              ("清华大学","https://pypi.tuna.tsinghua.edu.cn/simple/"),("中科大","https://pypi.mirrors.ustc.edu.cn/simple/"),
+              ("华为云","https://mirrors.huaweicloud.com/repository/pypi/simple/")]
+        for n, u in ms:
+            ttk.Radiobutton(mf, text=n, variable=self.mv, value=u).pack(anchor=tk.W)
+        self.mv.set(ms[0][1])
+        pfi = ttk.LabelFrame(pmf, text="包管理")
+        pfi.pack(fill=tk.X, padx=5, pady=5)
+        ttk.Label(pfi, text="包名 (多个用空格分隔):").pack(anchor=tk.W)
+        self.pe = ttk.Entry(pfi)
+        self.pe.pack(fill=tk.X, padx=5, pady=5)
+        bf = ttk.Frame(pfi)
+        bf.pack(fill=tk.X, pady=5)
+        ttk.Button(bf, text="检测pip更新", command=self.cpu).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bf, text="更新pip", command=self.up).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bf, text="安装", command=self.ip).pack(side=tk.LEFT, padx=2)
+        ofr = ttk.LabelFrame(pmf, text="输出")
+        ofr.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        ofb = ttk.Frame(ofr)
+        ofb.pack(fill=tk.X, pady=2)
+        ttk.Button(ofb, text="清空输出", command=self._cot).pack(side=tk.LEFT, padx=5)
+        self.ot = scrolledtext.ScrolledText(ofr, height=8)
+        self.ot.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.ot.config(state=tk.DISABLED)
+
+    def _cot(self):
+        self.ot.config(state=tk.NORMAL)
+        self.ot.delete(1.0, tk.END)
+        self.ot.config(state=tk.DISABLED)
+
+    def _cct(self):
+        cf = ttk.Frame(self.tn)
+        self.tn.add(cf, text="编译选项")
+        ofr = ttk.LabelFrame(cf, text="编译选项")
+        ofr.pack(fill=tk.X, padx=5, pady=5)
+        ttk.Label(ofr, text="选择编译方式:").pack(anchor=tk.W)
+        bf = ttk.Frame(ofr)
+        bf.pack(fill=tk.X, pady=5)
+        ttk.Button(bf, text="直接运行", command=lambda: self.rc(), width=12).pack(side=tk.LEFT, padx=5)
+        ttk.Button(bf, text="编译为EXE", command=lambda: self.ph.p("exe"), width=12).pack(side=tk.LEFT, padx=5)
+        ttk.Button(bf, text="其他格式", state=tk.DISABLED, width=12).pack(side=tk.LEFT, padx=5)
+        pfr = ttk.LabelFrame(cf, text="打包进度")
+        pfr.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.pb = ttk.Progressbar(pfr, orient=tk.HORIZONTAL, mode='determinate', maximum=100)
+        self.pb.pack(fill=tk.X, padx=10, pady=5)
+        self.sl = ttk.Label(pfr, text="当前阶段：未开始")
+        self.sl.pack(anchor=tk.W, padx=10)
+        lfr = ttk.LabelFrame(pfr, text="日志输出")
+        lfr.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        lfb = ttk.Frame(lfr)
+        lfb.pack(fill=tk.X, pady=2)
+        ttk.Button(lfb, text="清空输出", command=self._cll).pack(side=tk.LEFT, padx=5)
+        self.la = scrolledtext.ScrolledText(lfr, wrap=tk.WORD, height=6)
+        self.la.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.la.config(state='disabled')
+
+    def _cll(self):
+        self.la.config(state='normal')
+        self.la.delete(1.0, tk.END)
+        self.la.config(state='disabled')
+
+    def cpu(self):
+        self._rc([sys.executable, "-m", "pip", "list", "--outdated"], "检测更新")
+
+    def ip(self):
+        p = self.pe.get().strip()
+        if not p:
             messagebox.showerror("错误", "请输入包名")
             return
-        mirror = self.mirror_var.get()
-        self._run_cmd([sys.executable, "-m", "pip", "install", *pkgs.split(), "-i", mirror], "安装")
+        m = self.mv.get()
+        self._rc([sys.executable, "-m", "pip", "install", *p.split(), "-i", m], "安装")
 
-    def update_pip(self):
-        mirror = self.mirror_var.get()
-        self._run_cmd([sys.executable, "-m", "pip", "install", "--upgrade", "pip", "-i", mirror], "更新pip")
+    def up(self):
+        m = self.mv.get()
+        self._rc([sys.executable, "-m", "pip", "install", "--upgrade", "pip", "-i", m], "更新pip")
 
-    def _run_cmd(self, cmd, action):
-        self.output_text.config(state=tk.NORMAL)
-        self.output_text.delete(1.0, tk.END)
-        self.output_text.insert(tk.END, f"{action}中...\n")
-        self.output_text.config(state=tk.DISABLED)
-        threading.Thread(target=self._exec_cmd, args=(cmd, action), daemon=True).start()
+    def _rc(self, c, a):
+        self.ot.config(state=tk.NORMAL)
+        self.ot.delete(1.0, tk.END)
+        self.ot.insert(tk.END, f"{a}中...\n")
+        self.ot.config(state=tk.DISABLED)
+        threading.Thread(target=self._ec, args=(c, a), daemon=True).start()
 
-    def _exec_cmd(self, cmd, action):
+    def _ec(self, c, a):
         try:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                encoding="utf-8"
-            )
-            for line in proc.stdout:
-                self.root.after(0, self._append_output, line)
-            proc.wait()
-            if proc.returncode == 0:
-                self.root.after(0, self._append_output, f"\n{action}成功!\n")
+            p = subprocess.Popen(c, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, encoding="utf-8")
+            for l in p.stdout:
+                self.root.after(0, self._ao, l)
+            p.wait()
+            if p.returncode == 0:
+                self.root.after(0, self._ao, f"\n{a}成功!\n")
             else:
-                self.root.after(0, self._append_output, f"\n{action}失败! 错误码: {proc.returncode}\n")
+                self.root.after(0, self._ao, f"\n{a}失败! 错误码: {p.returncode}\n")
         except Exception as e:
-            self.root.after(0, self._append_output, f"\n错误: {str(e)}\n")
+            self.root.after(0, self._ao, f"\n错误: {str(e)}\n")
 
-    def _append_output(self, text):
-        self.output_text.config(state=tk.NORMAL)
-        self.output_text.insert(tk.END, text)
-        self.output_text.see(tk.END)
-        self.output_text.config(state=tk.DISABLED)
+    def _ao(self, t):
+        self.ot.config(state=tk.NORMAL)
+        self.ot.insert(tk.END, t)
+        self.ot.see(tk.END)
+        self.ot.config(state=tk.DISABLED)
 
-    def switch_theme(self, theme):
-        self.theme_mode = theme
-        self._apply_theme()
-
-    def _apply_theme(self):
-        bg_color = "#f0f0f0" if self.theme_mode == "light" else "#2d2d2d"
-        fg_color = "#000000" if self.theme_mode == "light" else "#e0e0e0"
-        editor_bg = "#ffffff" if self.theme_mode == "light" else "#1e1e1e"
-        self.root.configure(bg=bg_color)
-        self.code_editor.configure(bg=editor_bg, fg=fg_color, insertbackground=fg_color)
-        self.line_number_bar.configure(bg="#e0e0e0" if self.theme_mode == "light" else "#3d3d3d", 
-                                     fg="#666666" if self.theme_mode == "light" else "#a0a0a0")
-        self.output_text.configure(bg=editor_bg, fg=fg_color)
-        self.log_area.configure(bg=editor_bg, fg=fg_color)
-        
-        # 修复Treeview样式问题
-        self.style.configure("Treeview", 
-                            background="#ffffff" if self.theme_mode == "light" else "#252526",
-                            foreground="#000000" if self.theme_mode == "light" else "#d4d4d4")
-        self.style.map("Treeview", 
-                      background=[('selected', '#347083')],
-                      foreground=[('selected', 'white')])
-        
-        # 配置其他组件样式
-        self.style.configure("TFrame", background=bg_color)
-        self.style.configure("TLabel", background=bg_color, foreground=fg_color)
-        self.style.configure("TButton", background="#e1e1e1" if self.theme_mode == "light" else "#3c3c3c", 
-                       foreground=fg_color)
-        self.style.configure("TLabelFrame", background=bg_color, foreground=fg_color)
-        self.style.configure("TNotebook", background=bg_color)
-        self.style.configure("TNotebook.Tab", background="#d9d9d9" if self.theme_mode == "light" else "#2d2d2d", 
-                       foreground=fg_color)
-        self.style.map("TNotebook.Tab", background=[("selected", bg_color)])
-        self.style.configure("Vertical.TScrollbar", background=bg_color, troughcolor=bg_color)
-        self.style.configure("Horizontal.TScrollbar", background=bg_color, troughcolor=bg_color)
-        
-        self.tag_config = {
-            'keyword': {'foreground': '#9b59b6' if self.theme_mode == "light" else '#bb86fc'},
-            'constant': {'foreground': '#e67e22' if self.theme_mode == "light" else '#ffb74d'},
-            'comment': {'foreground': '#27ae60' if self.theme_mode == "light" else '#66bb6a'},
-            'string': {'foreground': '#e74c3c' if self.theme_mode == "light" else '#f44336'},
-            'number': {'foreground': '#3498db' if self.theme_mode == "light" else '#29b6f6'},
-            'error': {'background': 'red', 'foreground': 'white'},
-        }
-        self._init_highlight_tags()
-        self._highlight_code()
-
-    def _create_file_tree(self):
-        self.tree = ttk.Treeview(self.file_tree_frame, show='tree')
-        ysb = ttk.Scrollbar(self.file_tree_frame, orient='vertical', command=self.tree.yview)
-        xsb = ttk.Scrollbar(self.file_tree_frame, orient='horizontal', command=self.tree.xview)
-        self.tree.configure(yscroll=ysb.set, xscroll=xsb.set)
-        self.tree.heading('#0', text='目录结构', anchor='w')
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    def _cf(self):
+        self.tr = ttk.Treeview(self.ftf, show='tree')
+        ysb = ttk.Scrollbar(self.ftf, orient='vertical', command=self.tr.yview)
+        xsb = ttk.Scrollbar(self.ftf, orient='horizontal', command=self.tr.xview)
+        self.tr.configure(yscroll=ysb.set, xscroll=xsb.set)
+        self.tr.heading('#0', text='目录结构', anchor='w')
+        self.tr.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         ysb.pack(side=tk.RIGHT, fill=tk.Y)
         xsb.pack(side=tk.BOTTOM, fill=tk.X)
-        self.tree.bind('<<TreeviewOpen>>', self._update_tree_children)
-        self.tree.bind('<Double-1>', self._open_tree_file)
+        self.tr.bind('<<TreeviewOpen>>', self._utc)
+        self.tr.bind('<Double-1>', self._otf)
 
-    def _create_code_editor(self):
-        # 创建行号栏和编辑器框架
-        editor_container = ttk.Frame(self.editor_frame)
-        editor_container.pack(fill=tk.BOTH, expand=True)
-        
-        # 行号栏
-        self.line_number_bar = tk.Text(
-            editor_container, 
-            width=4, 
-            height=1,
-            font=("Consolas", 11),
-            padx=4,
-            takefocus=0,
-            border=0,
-            highlightthickness=0,
-            state="disabled"
-        )
-        self.line_number_bar.pack(side=tk.LEFT, fill=tk.Y)
-        
-        # 编辑器
-        self.code_editor = scrolledtext.ScrolledText(
-            editor_container, 
-            wrap=tk.NONE,
-            font=("Consolas", 11),
-            padx=5,
-            pady=5
-        )
-        self.code_editor.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        
-        # 垂直滚动条
-        vsb = ttk.Scrollbar(editor_container, orient="vertical", command=self.code_editor.yview)
+    def _cce(self):
+        ec = ttk.Frame(self.efr)
+        ec.pack(fill=tk.BOTH, expand=True)
+        self.lnb = tk.Text(ec, width=4, height=1, font=("Consolas", 11), padx=4, takefocus=0, border=0, highlightthickness=0, state="disabled")
+        self.lnb.pack(side=tk.LEFT, fill=tk.Y)
+        self.ce = tk.Text(ec, wrap=tk.NONE, font=("Consolas", 11), padx=5, pady=5, undo=True)
+        vsb = ttk.Scrollbar(ec, orient="vertical", command=self._sync_scroll)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        self.code_editor.configure(yscrollcommand=vsb.set)
-        
-        # 水平滚动条
-        hsb = ttk.Scrollbar(self.editor_frame, orient="horizontal", command=self.code_editor.xview)
+        hsb = ttk.Scrollbar(ec, orient="horizontal", command=self.ce.xview)
         hsb.pack(side=tk.BOTTOM, fill=tk.X)
-        self.code_editor.configure(xscrollcommand=hsb.set)
-        
-        # 设置滚动同步
-        self.code_editor.configure(yscrollcommand=lambda f, l: self._on_scroll(f, l))
-        self.line_number_bar.configure(yscrollcommand=lambda f, l: self.code_editor.yview_moveto(f))
+        self.ce.configure(yscrollcommand=self._update_scroll)
+        self.ce.configure(xscrollcommand=hsb.set)
+        self.ce.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.lnb.configure(yscrollcommand=lambda *args: vsb.set(*args))
+        self.ce.bind('<KeyRelease>', self._uln)
+        self.ce.bind('<KeyPress>', self._ah)
+        self.ce.bind('<MouseWheel>', self._uln)
+        self.ce.bind('<Button-1>', self._uln)
+        self.ce.bind('<Configure>', self._uln)
+        self.ce.bind('<KeyRelease>', self._hc_d)
+        self.ce.insert(tk.END, "欢迎使用Python IDE！\n\n功能说明：\n1. 支持Python代码编辑和运行\n2. 支持文件资源管理器\n3. 支持库管理和编译选项\n\n请从文件开始使用...")
 
-    def _on_scroll(self, first, last):
-        self.line_number_bar.yview_moveto(first)
-        self._update_line_numbers()
+    def _update_scroll(self, *args):
+        if not self.scroll_lock:
+            self.scroll_lock = True
+            self.lnb.yview_moveto(args[0])
+            self.scroll_lock = False
+        return True
 
-    def _update_line_numbers(self, event=None):
-        if not hasattr(self, 'code_editor'):
+    def _sync_scroll(self, *args):
+        if not self.scroll_lock:
+            self.scroll_lock = True
+            self.ce.yview(*args)
+            self.lnb.yview(*args)
+            self.scroll_lock = False
+        self._uln()
+
+    def _uln(self, e=None):
+        if not self.ce.winfo_exists():
             return
-        line_count = int(self.code_editor.index('end-1c').split('.')[0])
-        line_numbers = "\n".join(str(i) for i in range(1, line_count + 1))
-        if self.line_number_bar:
-            self.line_number_bar.config(state="normal")
-            self.line_number_bar.delete("1.0", tk.END)
-            self.line_number_bar.insert("1.0", line_numbers)
-            self.line_number_bar.config(state="disabled")
+        lc = int(self.ce.index('end-1c').split('.')[0])
+        lns = "\n".join(str(i) for i in range(1, lc + 1))
+        self.lnb.config(state="normal")
+        self.lnb.delete("1.0", tk.END)
+        self.lnb.insert("1.0", lns)
+        self.lnb.config(state="disabled")
+        self._hc_d()
 
-    def _create_button_frame(self):
-        # 按钮区域
-        run_button = ttk.Button(
-            self.button_frame, 
-            text="运行 (F5)", 
-            command=self.run_code,
-            width=12
-        )
-        run_button.pack(side=tk.LEFT, padx=5)
-        
-        compile_button = ttk.Button(
-            self.button_frame, 
-            text="编译选项", 
-            command=lambda: self.tool_notebook.select(1),
-            width=12
-        )
-        compile_button.pack(side=tk.LEFT, padx=5)
-        
-        save_button = ttk.Button(
-            self.button_frame, 
-            text="保存", 
-            command=self.save_file,
-            width=8
-        )
-        save_button.pack(side=tk.LEFT, padx=5)
-        
-        open_button = ttk.Button(
-            self.button_frame, 
-            text="打开", 
-            command=self.open_file,
-            width=8
-        )
-        open_button.pack(side=tk.LEFT, padx=5)
-        
-        # 添加全屏按钮
-        fullscreen_button = ttk.Button(
-            self.button_frame, 
-            text="全屏", 
-            command=self.toggle_fullscreen,
-            width=8
-        )
-        fullscreen_button.pack(side=tk.RIGHT, padx=5)
-
-    def open_folder(self):
-        folder_path = filedialog.askdirectory()
-        if not folder_path:
+    def ofd(self):
+        fp = filedialog.askdirectory()
+        if not fp:
             return
-        self.current_folder = folder_path
-        self.tree.delete(*self.tree.get_children())
-        root_node = self.tree.insert('', 'end', text=folder_path, open=True)
-        self._load_tree(root_node, folder_path)
+        self.cf = fp
+        self.tr.delete(*self.tr.get_children())
+        rn = self.tr.insert('', 'end', text=fp, open=True)
+        self._lt(rn, fp)
 
-    def _load_tree(self, parent, path):
+    def _lt(self, p, pt):
         try:
-            for p in Path(path).iterdir():
-                if p.name.startswith('.'):
+            for pth in Path(pt).iterdir():
+                if pth.name.startswith('.'):
                     continue
-                node = self.tree.insert(parent, 'end', text=p.name)
-                if p.is_dir():
-                    self.tree.insert(node, 'end')
+                n = self.tr.insert(p, 'end', text=pth.name)
+                if pth.is_dir():
+                    self.tr.insert(n, 'end')
         except Exception as e:
             messagebox.showerror("错误", f"无法加载目录: {str(e)}")
 
-    def _update_tree_children(self, event):
-        node = self.tree.focus()
-        path = self._get_node_path(node)
-        self.tree.delete(*self.tree.get_children(node))
-        self._load_tree(node, path)
+    def _utc(self, e):
+        n = self.tr.focus()
+        pt = self._gnp(n)
+        self.tr.delete(*self.tr.get_children(n))
+        self._lt(n, pt)
 
-    def _open_tree_file(self, event):
-        node = self.tree.focus()
-        path = self._get_node_path(node)
-        if os.path.isfile(path):
+    def _otf(self, e):
+        n = self.tr.focus()
+        pt = self._gnp(n)
+        if os.path.isfile(pt):
             try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    self.code_editor.delete('1.0', tk.END)
-                    self.code_editor.insert('1.0', f.read())
-                    self.current_file_path = path
-                self._update_line_numbers()
+                with open(pt, 'r', encoding='utf-8') as f:
+                    self.ce.delete('1.0', tk.END)
+                    self.ce.insert('1.0', f.read())
+                    self.cfp = pt
+                self._uln()
+                self._hc_d()
             except Exception as e:
                 messagebox.showerror("错误", f"无法打开文件: {str(e)}")
 
-    def _get_node_path(self, node):
-        path = []
-        while node:
-            path.append(self.tree.item(node)['text'])
-            node = self.tree.parent(node)
-        return os.path.join(*reversed(path))
+    def _gnp(self, n):
+        p = []
+        while n:
+            p.append(self.tr.item(n)['text'])
+            n = self.tr.parent(n)
+        return os.path.join(*reversed(p))
 
-    def _init_highlight_tags(self):
-        for tag, style in self.tag_config.items():
-            self.code_editor.tag_configure(tag, **style)
+    def _iht(self):
+        for t, s in self.tc.items():
+            self.ce.tag_configure(t, **s)
 
-    def _highlight_code(self, event=None):
-        code = self.code_editor.get("1.0", "end-1c")
-        self.code_editor.mark_set("range_start", "1.0")
-        for tag in self.tag_config.keys():
-            self.code_editor.tag_remove(tag, "1.0", tk.END)
-        for pattern, tag in self.highlight_patterns:
-            matches = re.finditer(pattern, code, re.MULTILINE)
-            for match in matches:
-                start = f"1.0 + {match.start()}c"
-                end = f"1.0 + {match.end()}c"
-                self.code_editor.tag_add(tag, start, end)
+    def _hc_d(self, e=None):
+        if self.hc_timer:
+            self.root.after_cancel(self.hc_timer)
+        self.hc_timer = self.root.after(300, self._hc)
 
-    def _autocomplete_handler(self, event):
-        if event.keysym in ['Return', 'Escape']:
-            self.autocomplete_list.place_forget()
+    def _hc(self):
+        if not self.ce.winfo_exists():
             return
-        line = self.code_editor.get("insert linestart", "insert")
-        last_word = re.findall(r'\w+$', line)
-        if last_word:
-            prefix = last_word[0]
-            matches = [w for w in self.autocomplete_words if w.startswith(prefix)]
-            if matches:
-                x, y = self.code_editor.bbox("insert")
-                if x and y:
-                    self.autocomplete_list.place(x=x, y=y+20)
-                    self.autocomplete_list.delete(0, tk.END)
-                    for m in sorted(matches):
-                        self.autocomplete_list.insert(tk.END, m)
-                    self.autocomplete_list.bind('<<ListboxSelect>>', self._insert_completion)
+        self.ce.mark_set("range_start", "1.0")
+        for t in self.tc.keys():
+            self.ce.tag_remove(t, "1.0", tk.END)
+        c = self.ce.get("1.0", "end-1c")
+        for p, t in self.hp:
+            flags = re.MULTILINE | re.DOTALL if t == 'str' else re.MULTILINE
+            ms = re.finditer(p, c, flags)
+            for m in ms:
+                s = f"1.0 + {m.start()}c"
+                e = f"1.0 + {m.end()}c"
+                self.ce.tag_add(t, s, e)
+
+    def _ah(self, e):
+        if e.keysym in ['Return', 'Escape']:
+            if self.acl and self.acl.winfo_exists():
+                self.acl.destroy()
+            return
+        if e.keysym == 'Tab' and self.acl and self.acl.winfo_exists():
+            self._ic(None)
+            return "break"
+        ln = self.ce.get("insert linestart", "insert")
+        lw = re.findall(r'\w+$', ln)
+        if lw:
+            px = lw[0]
+            ms = [w for w in self.acw if w.startswith(px)]
+            if ms:
+                x, y = self.ce.bbox("insert")
+                if x is None or y is None:
+                    return
+                if self.acl and self.acl.winfo_exists():
+                    self.acl.destroy()
+                self.acl = tk.Listbox(self.ce, height=min(10, len(ms)))
+                self.acl.place(x=x, y=y+20)
+                for m in sorted(ms)[:20]:
+                    self.acl.insert(tk.END, m)
+                self.acl.bind('<<ListboxSelect>>', self._ic)
+                self.acl.bind('<Return>', self._ic)
+                self.acl.focus_set()
+                self.acl.selection_set(0)
             else:
-                self.autocomplete_list.place_forget()
+                if self.acl and self.acl.winfo_exists():
+                    self.acl.destroy()
         else:
-            self.autocomplete_list.place_forget()
+            if self.acl and self.acl.winfo_exists():
+                self.acl.destroy()
 
-    def _insert_completion(self, event):
-        selected = self.autocomplete_list.get(tk.ACTIVE)
-        line = self.code_editor.get("insert linestart", "insert")
-        last_word = re.findall(r'\w+$', line)
-        if last_word:
-            word_len = len(last_word[0])
-            self.code_editor.delete(f"insert - {word_len}c", "insert")
-        self.code_editor.insert("insert", selected)
-        self.autocomplete_list.place_forget()
+    def _ic(self, e):
+        if not self.acl or not self.acl.winfo_exists():
+            return
+        if not self.acl.curselection():
+            return
+        s = self.acl.get(self.acl.curselection()[0])
+        ln = self.ce.get("insert linestart", "insert")
+        lw = re.findall(r'\w+$', ln)
+        if lw:
+            wl = len(lw[0])
+            self.ce.delete(f"insert - {wl}c", "insert")
+        self.ce.insert("insert", s)
+        self.acl.destroy()
 
-    def run_code(self, do_compile=False):
-        if not messagebox.askyesno("警告", "运行未知代码可能有风险，是否继续？"):
+    def rc(self, dc=False):
+        if not self.sfi():
             return
-        if not self.save_file_if_needed():
-            return
-        self.code_editor.tag_remove('error', '1.0', tk.END)
+        self.ce.tag_remove('err', '1.0', tk.END)
         try:
-            code = self.code_editor.get('1.0', tk.END)
-            compile(code, '<string>', 'exec')
+            c = self.ce.get('1.0', tk.END)
+            compile(c, '<string>', 'exec')
         except SyntaxError as e:
-            self._handle_syntax_error(e)
+            self._hse(e)
             return
         try:
-            if os.name == 'nt':
-                process = subprocess.Popen(
-                    f'start cmd /k python "{self.current_file_path}"', 
-                    shell=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True
-                )
-                Thread(target=self._monitor_process_output, args=(process,), daemon=True).start()
-            elif os.name == 'posix':
-                process = subprocess.Popen(
-                    f'x-terminal-emulator -e bash -c "python \\"{self.current_file_path}\\"; read -p \'按回车键继续...\'"',
-                    shell=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True
-                )
-                Thread(target=self._monitor_process_output, args=(process,), daemon=True).start()
-        except Exception as e:
-            messagebox.showerror("错误", f"执行失败: {str(e)}")
-
-    def _handle_syntax_error(self, e):
-        error_type = self.error_mapping.get(type(e).__name__, type(e).__name__)
-        message = f"{error_type} 在第 {e.lineno} 行\n\n{e.text.strip()}\n{' ' * (e.offset - 1)}^\n\n{e.msg}"
-        messagebox.showerror("语法错误", message)
-        if e.lineno:
-            start = f"{e.lineno}.0"
-            end = f"{e.lineno}.end"
-            self.code_editor.tag_add('error', start, end)
-            self.code_editor.see(start)
-
-    def _monitor_process_output(self, process):
-        output = []
-        try:
-            for line in iter(process.stdout.readline, ''):
-                output.append(line)
-                if any(error_type in line for error_type in self.error_mapping):
-                    process.wait()
-                    self._show_error_dialog(''.join(output))
-                    break
-        except Exception as e:
-            print(f"监控输出时出错: {e}")
-        finally:
-            process.stdout.close()
-
-    def _show_error_dialog(self, error_output):
-        error_type = None
-        line_number = None
-        error_pattern = re.compile(r'(\w+Error): (.*?)(?:\n|$)')
-        line_pattern = re.compile(r'line (\d+)')
-        error_match = error_pattern.search(error_output)
-        line_match = line_pattern.search(error_output)
-        if error_match:
-            error_type = error_match.group(1)
-            error_msg = error_match.group(2)
-            translated_type = self.error_mapping.get(error_type, error_type)
-            if line_match:
-                line_number = int(line_match.group(1))
-                message = f"{translated_type} 在第 {line_number} 行\n\n{error_msg}"
-                self.root.after(0, lambda: self._highlight_error_line(line_number))
+            wd = self.work_dir if self.work_dir else os.path.dirname(self.cfp)
+            if not wd:
+                wd = os.getcwd()
+            if platform.system() == "Windows":
+                subprocess.Popen(f'start cmd /k "cd /d "{wd}" && python "{self.cfp}"', shell=True)
             else:
-                message = f"{translated_type}\n\n{error_msg}"
-            self.root.after(0, lambda: messagebox.showerror("运行错误", message))
+                subprocess.Popen(['x-terminal-emulator', '-e', f'bash -c \'cd "{wd}" && python3 "{self.cfp}"\''])
+        except Exception as e:
+            messagebox.showerror("执行失败", f"无法启动终端: {str(e)}")
 
-    def _highlight_error_line(self, line_number):
-        self.code_editor.tag_remove('error', '1.0', tk.END)
-        start = f"{line_number}.0"
-        end = f"{line_number}.end"
-        self.code_editor.tag_add('error', start, end)
-        self.code_editor.see(start)
+    def _hse(self, e):
+        et = self.em.get(type(e).__name__, type(e).__name__)
+        m = f"{et} 在第 {e.lineno} 行\n\n{e.text.strip()}\n{' ' * (e.offset - 1)}^\n\n{e.msg}"
+        messagebox.showerror("语法错误", m)
+        if e.lineno:
+            s = f"{e.lineno}.0"
+            e = f"{e.lineno}.end"
+            self.ce.tag_add('err', s, e)
+            self.ce.see(s)
 
-    def save_file_if_needed(self):
-        if self.current_file_path and os.path.exists(self.current_file_path):
-            return self._save_to_file(self.current_file_path)
+    def sfi(self):
+        if self.cfp and os.path.exists(self.cfp):
+            return self._stf(self.cfp)
         else:
-            return self.save_file_as()
+            return self.sfa()
 
-    def save_file_as(self):
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".py",
-            filetypes=[
-                ("Python Files", "*.py"),
-                ("Text Files", "*.txt"),
-                ("All Files", "*.*")
-            ]
-        )
-        if file_path:
-            return self._save_to_file(file_path)
+    def sfa(self):
+        fp = filedialog.asksaveasfilename(defaultextension=".py", filetypes=[("Python Files", "*.py"), ("Text Files", "*.txt"), ("All Files", "*.*")])
+        if fp:
+            return self._stf(fp)
         return False
 
-    def save_file(self):
-        if self.current_file_path:
-            return self._save_to_file(self.current_file_path)
+    def sf(self):
+        if self.cfp:
+            return self._stf(self.cfp)
         else:
-            return self.save_file_as()
+            return self.sfa()
 
-    def _save_to_file(self, file_path):
+    def _stf(self, fp):
         try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(self.code_editor.get("1.0", tk.END))
-            self.current_file_path = file_path
+            with open(fp, "w", encoding="utf-8") as f:
+                f.write(self.ce.get("1.0", tk.END))
+            self.cfp = fp
             return True
         except OSError as e:
             messagebox.showerror("错误", f"保存失败: {str(e)}")
             return False
 
-    def open_file(self):
-        file_path = filedialog.askopenfilename(
-            filetypes=[
-                ("Python Files", "*.py"),
-                ("Text Files", "*.txt"),
-                ("All Files", "*.*")
-            ]
-        )
-        if file_path:
+    def of(self):
+        fp = filedialog.askopenfilename(filetypes=[("Python Files", "*.py"), ("Text Files", "*.txt"), ("All Files", "*.*")])
+        if fp:
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    self.code_editor.delete("1.0", tk.END)
-                    self.code_editor.insert("1.0", f.read())
-                    self.current_file_path = file_path
-                self._update_line_numbers()
+                with open(fp, "r", encoding="utf-8") as f:
+                    self.ce.delete("1.0", tk.END)
+                    self.ce.insert("1.0", f.read())
+                    self.cfp = fp
+                self._uln()
+                self._hc_d()
             except Exception as e:
                 messagebox.showerror("错误", f"打开失败: {str(e)}")
 
+    def undo(self):
+        try:
+            self.ce.edit_undo()
+        except:
+            pass
+
+    def redo(self):
+        try:
+            self.ce.edit_redo()
+        except:
+            pass
+
+    def cut(self):
+        self.ce.event_generate("<<Cut>>")
+
+    def copy(self):
+        self.ce.event_generate("<<Copy>>")
+
+    def paste(self):
+        self.ce.event_generate("<<Paste>>")
+
+    def select_all(self):
+        self.ce.tag_add(tk.SEL, "1.0", tk.END)
+        self.ce.mark_set(tk.INSERT, "1.0")
+        self.ce.see(tk.INSERT)
+        return "break"
+
+    def find_text(self):
+        self.find_window = tk.Toplevel(self.root)
+        self.find_window.title("查找")
+        self.find_window.geometry("400x150")
+        self.find_window.resizable(False, False)
+        self.find_window.transient(self.root)
+        self.find_window.grab_set()
+        tk.Label(self.find_window, text="查找内容:").pack(pady=(10, 0), padx=10, anchor=tk.W)
+        self.find_entry = tk.Entry(self.find_window, width=40)
+        self.find_entry.pack(padx=10, pady=5)
+        frame = tk.Frame(self.find_window)
+        frame.pack(pady=10)
+        tk.Button(frame, text="查找下一个", command=self.find_next, width=10).pack(side=tk.LEFT, padx=5)
+        tk.Button(frame, text="取消", command=self.find_window.destroy, width=10).pack(side=tk.LEFT, padx=5)
+
+    def find_next(self):
+        search_str = self.find_entry.get()
+        if not search_str:
+            return
+        start_pos = self.ce.index(tk.INSERT)
+        pos = self.ce.search(search_str, start_pos, nocase=1, stopindex=tk.END)
+        if pos:
+            end_pos = f"{pos}+{len(search_str)}c"
+            self.ce.tag_remove(tk.SEL, "1.0", tk.END)
+            self.ce.tag_add(tk.SEL, pos, end_pos)
+            self.ce.mark_set(tk.INSERT, end_pos)
+            self.ce.see(tk.INSERT)
+            self.ce.focus_set()
+        else:
+            if start_pos != "1.0":
+                pos = self.ce.search(search_str, "1.0", nocase=1, stopindex=tk.END)
+                if pos:
+                    end_pos = f"{pos}+{len(search_str)}c"
+                    self.ce.tag_remove(tk.SEL, "1.0", tk.END)
+                    self.ce.tag_add(tk.SEL, pos, end_pos)
+                    self.ce.mark_set(tk.INSERT, end_pos)
+                    self.ce.see(tk.INSERT)
+                    self.ce.focus_set()
+                else:
+                    messagebox.showinfo("查找", "找不到匹配项")
+            else:
+                messagebox.showinfo("查找", "找不到匹配项")
 
 class PackageHelper:
     def __init__(self, ide):
         self.ide = ide
-        self.source_file = ""
-        self.output_dir = ""
-        self.progress_window = None
-        self.log_queue = queue.Queue()
-        self.progress_queue = queue.Queue()
-        self.stage_regex = [
-            (re.compile(r'Analyzing\s.+', re.I), '分析依赖', 'analyzing'),
-            (re.compile(r'collecting\s.+', re.I), '收集文件', 'collecting'),
-            (re.compile(r'generating\s.+', re.I), '生成中间文件', 'generating'),
-            (re.compile(r'writing\s.+', re.I), '写入数据', 'writing'),
-            (re.compile(r'building\s.+', re.I), '构建可执行文件', 'building'),
-            (re.compile(r'completed\s.+', re.I), '完成打包', 'completed'),
-            (re.compile(r'(\d+)/(\d+)\s+steps'), '步骤', 'dynamic')
+        self.sf = ""
+        self.od = ""
+        self.lq = queue.Queue()
+        self.pq = queue.Queue()
+        self.sr = [
+            (re.compile(r'Analyzing\s.+', re.I), '分析依赖', 'a'),
+            (re.compile(r'collecting\s.+', re.I), '收集文件', 'c'),
+            (re.compile(r'generating\s.+', re.I), '生成中间文件', 'g'),
+            (re.compile(r'writing\s.+', re.I), '写入数据', 'w'),
+            (re.compile(r'building\s.+', re.I), '构建可执行文件', 'b'),
+            (re.compile(r'completed\s.+', re.I), '完成打包', 'd'),
+            (re.compile(r'(\d+)/(\d+)\s+steps'), '步骤', 'dy')
         ]
-        self.stage_weights = {
-            'analyzing': 15,
-            'collecting': 25,
-            'generating': 15,
-            'writing': 20,
-            'building': 20,
-            'completed': 5
-        }
-        self.completed_stages_progress = 0
-        self.current_stage = None
-        self.current_step_progress = 0
+        self.sw = {'a':15, 'c':25, 'g':15, 'w':20, 'b':20, 'd':5}
+        self.csp = 0
+        self.cs = None
+        self.cspg = 0
 
-    def package(self, output_format):
-        if not self.ide.save_file_if_needed():
+    def p(self, of):
+        if not self.ide.sfi():
             return
-        self.output_dir = filedialog.askdirectory(title="选择保存路径")
-        if not self.output_dir:
+        self.od = filedialog.askdirectory(title="选择保存路径")
+        if not self.od:
             messagebox.showerror("错误", "必须选择保存路径")
             return
-        self.clean_intermediate = messagebox.askyesno(
-            "清除中间文件",
-            "打包完成后是否清除build和spec文件夹？"
-        )
-        self.source_file = self.ide.current_file_path
-        self.ide.progress_bar['value'] = 0
-        self.ide.stage_label.config(text="当前阶段：初始化")
-        self.ide.log_area.config(state='normal')
-        self.ide.log_area.delete(1.0, tk.END)
-        self.ide.log_area.config(state='disabled')
-        threading.Thread(
-            target=self._package, 
-            args=(output_format,), 
-            daemon=True
-        ).start()
-        self.ide.root.after(100, self.update_progress)
+        self.ci = messagebox.askyesno("清除中间文件", "打包完成后是否清除build和spec文件夹？")
+        self.sf = self.ide.cfp
+        self.ide.pb['value'] = 0
+        self.ide.sl.config(text="当前阶段：初始化")
+        self.ide.la.config(state='normal')
+        self.ide.la.delete(1.0, tk.END)
+        self.ide.la.config(state='disabled')
+        threading.Thread(target=self._p, args=(of,), daemon=True).start()
+        self.ide.root.after(100, self.up)
 
-    def update_progress(self):
-        while not self.log_queue.empty():
-            log = self.log_queue.get_nowait()
-            self.ide.log_area.config(state='normal')
-            self.ide.log_area.insert(tk.END, log + "\n")
-            self.ide.log_area.config(state='disabled')
-            self.ide.log_area.see(tk.END)
-        while not self.progress_queue.empty():
-            progress, stage = self.progress_queue.get_nowait()
-            self.ide.progress_bar['value'] = min(progress, 100)
-            self.ide.stage_label.config(text=f"当前阶段：{stage}")
-        self.ide.root.after(100, self.update_progress)
+    def up(self):
+        while not self.lq.empty():
+            l = self.lq.get_nowait()
+            self.ide.la.config(state='normal')
+            self.ide.la.insert(tk.END, l + "\n")
+            self.ide.la.config(state='disabled')
+            self.ide.la.see(tk.END)
+        while not self.pq.empty():
+            p, s = self.pq.get_nowait()
+            self.ide.pb['value'] = min(p, 100)
+            self.ide.sl.config(text=f"当前阶段：{s}")
+        self.ide.root.after(100, self.up)
 
-    def _package(self, output_format):
-        if output_format == "exe":
-            self.package_to_exe()
+    def _p(self, of):
+        if of == "exe":
+            self.pte()
         else:
-            self.log_queue.put("不支持的打包格式")
+            self.lq.put("不支持的打包格式")
             messagebox.showinfo("错误", "选择的格式不支持")
 
-    def package_to_exe(self):
-        if not self._check_pyinstaller():
+    def pte(self):
+        if not self._cp():
             return
         try:
-            process = subprocess.Popen(
-                ["pyinstaller", "--onefile",
-                 "--distpath", self.output_dir,
-                 "--workpath", os.path.join(self.output_dir, "build"),
-                 "--specpath", os.path.join(self.output_dir, "spec"),
-                 "--clean", self.source_file],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                encoding="utf-8"
-            )
-            self._process_pyinstaller_output(process)
-            if process.returncode == 0:
-                self._handle_success()
+            p = subprocess.Popen(["pyinstaller", "--onefile", "--distpath", self.od, "--workpath", os.path.join(self.od, "build"), "--specpath", os.path.join(self.od, "spec"), "--clean", self.sf], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, encoding="utf-8")
+            self._ppo(p)
+            if p.returncode == 0:
+                self._hs()
             else:
-                messagebox.showerror("失败", f"错误代码：{process.returncode}")
+                messagebox.showerror("失败", f"错误代码：{p.returncode}")
         except Exception as e:
-            self.log_queue.put(f"打包异常：{str(e)}")
+            self.lq.put(f"打包异常：{str(e)}")
             messagebox.showerror("错误", str(e))
 
-    def _check_pyinstaller(self):
+    def _cp(self):
         try:
-            subprocess.run(
-                ["pyinstaller", "--version"],
-                check=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
+            subprocess.run(["pyinstaller", "--version"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return True
         except Exception as e:
-            self.log_queue.put(f"错误：{str(e)}")
+            self.lq.put(f"错误：{str(e)}")
             messagebox.showerror("错误", "请先安装pyinstaller\npip install pyinstaller")
             return False
 
-    def _process_pyinstaller_output(self, process):
+    def _ppo(self, p):
         while True:
-            output = process.stdout.readline()
-            if output == '' and process.poll() is not None:
+            o = p.stdout.readline()
+            if o == '' and p.poll() is not None:
                 break
-            if output:
-                self.log_queue.put(output.strip())
-                self._update_progress_from_output(output)
+            if o:
+                self.lq.put(o.strip())
+                self._upfo(o)
+        if p.returncode == 0:
+            self._hs()
 
-    def _update_progress_from_output(self, output):
-        for regex, display_name, stage_key in self.stage_regex:
-            match = regex.search(output)
-            if match:
-                if stage_key == 'dynamic' and self.current_stage:
-                    self._update_dynamic_progress(match, display_name)
+    def _upfo(self, o):
+        for r, dn, sk in self.sr:
+            m = r.search(o)
+            if m:
+                if sk == 'dy' and self.cs:
+                    self._udp(m, dn)
                 else:
-                    self._update_stage_progress(stage_key, display_name)
+                    self._usp(sk, dn)
                 break
 
-    def _update_dynamic_progress(self, match, display_name):
-        current = int(match.group(1))
-        total = int(match.group(2))
-        stage_weight = self.stage_weights.get(self.current_stage, 0)
-        self.current_step_progress = (current / total) * stage_weight
-        total_progress = self.completed_stages_progress + self.current_step_progress
-        self.progress_queue.put((
-            total_progress,
-            f"{display_name} ({current}/{total})"
-        ))
+    def _udp(self, m, dn):
+        cur = int(m.group(1))
+        tot = int(m.group(2))
+        sw = self.sw.get(self.cs, 0)
+        self.cspg = (cur / tot) * sw
+        tp = self.csp + self.cspg
+        self.pq.put((tp, f"{dn} ({cur}/{tot})"))
 
-    def _update_stage_progress(self, stage_key, display_name):
-        if self.current_stage:
-            self.completed_stages_progress += self.stage_weights.get(self.current_stage, 0)
-        self.current_stage = stage_key
-        self.current_step_progress = 0
-        self.progress_queue.put((
-            self.completed_stages_progress,
-            display_name
-        ))
+    def _usp(self, sk, dn):
+        if self.cs:
+            self.csp += self.sw.get(self.cs, 0)
+        self.cs = sk
+        self.cspg = 0
+        self.pq.put((self.csp, dn))
 
-    def _handle_success(self):
-        if self.current_stage:
-            self.completed_stages_progress += self.stage_weights.get(self.current_stage, 0)
-        self.progress_queue.put((100, "完成"))
-        if self.clean_intermediate:
-            self._clean_intermediate_files()
-        messagebox.showinfo("成功", f"文件已生成到：\n{self.output_dir}")
+    def _hs(self):
+        if self.cs:
+            self.csp += self.sw.get(self.cs, 0)
+        self.pq.put((100, "完成"))
+        if self.ci:
+            self._cif()
+        messagebox.showinfo("成功", f"文件已生成到：\n{self.od}")
 
-    def _clean_intermediate_files(self):
-        build_path = os.path.join(self.output_dir, "build")
-        spec_path = os.path.join(self.output_dir, "spec")
+    def _cif(self):
+        bp = os.path.join(self.od, "build")
+        sp = os.path.join(self.od, "spec")
         try:
-            if os.path.exists(build_path):
-                shutil.rmtree(build_path)
-            if os.path.exists(spec_path):
-                shutil.rmtree(spec_path)
-            self.log_queue.put("已清除中间文件")
+            if os.path.exists(bp):
+                shutil.rmtree(bp)
+            if os.path.exists(sp):
+                shutil.rmtree(sp)
+            self.lq.put("已清除中间文件")
         except Exception as e:
-            self.log_queue.put(f"删除中间文件失败：{str(e)}")
-
+            self.lq.put(f"删除中间文件失败：{str(e)}")
 
 if __name__ == "__main__":
-    root = tk.Tk()
+    r = tk.Tk()
     try:
-        root.geometry("1000x700")
-        ide = SimplePythonIDE(root)
-        root.mainloop()
+        r.geometry("1000x700")
+        ide = SimplePythonIDE(r)
+        ide._ctn()
+        r.mainloop()
     except Exception as e:
         messagebox.showerror("致命错误", f"应用程序崩溃: {str(e)}")
         raise

@@ -1,0 +1,154 @@
+{
+  "cf": {
+    "meaning": "current_folder",
+    "description": "当前打开的文件夹路径"
+  },
+  "cfp": {
+    "meaning": "current_file_path",
+    "description": "当前编辑的文件路径"
+  },
+  "lnb": {
+    "meaning": "line_number_bar",
+    "description": "左侧行号栏组件"
+  },
+  "hp": {
+    "meaning": "highlight_patterns",
+    "description": "语法高亮正则规则列表"
+  },
+  "tc": {
+    "meaning": "tag_configs",
+    "description": "文本标签样式配置"
+  },
+  "acw": {
+    "meaning": "auto_complete_words",
+    "description": "自动补全关键词列表"
+  },
+  "em": {
+    "meaning": "error_messages",
+    "description": "错误信息翻译字典"
+  },
+  "p": {
+    "meaning": "process",
+    "description": "子进程对象"
+  },
+  "oq": {
+    "meaning": "output_queue",
+    "description": "输出消息队列"
+  },
+  "pl": {
+    "meaning": "process_lock",
+    "description": "进程锁"
+  },
+  "ph": {
+    "meaning": "package_helper",
+    "description": "打包助手实例"
+  },
+  "cw": {
+    "meaning": "completion_widget",
+    "description": "自动补全弹出框"
+  },
+  "pmw": {
+    "meaning": "popup_menu_window",
+    "description": "右键菜单窗口"
+  },
+  "_su": {
+    "meaning": "_setup_ui",
+    "description": "初始化用户界面"
+  },
+  "_iht": {
+    "meaning": "_init_highlight_tags",
+    "description": "初始化语法高亮标签"
+  },
+  "_le": {
+    "meaning": "_load_error_translations",
+    "description": "加载错误翻译字典"
+  },
+  "_cm": {
+    "meaning": "_create_menus",
+    "description": "创建菜单栏"
+  },
+  "_cf": {
+    "meaning": "_create_file_tree",
+    "description": "创建文件树视图"
+  },
+  "_cce": {
+    "meaning": "_create_code_editor",
+    "description": "创建代码编辑器组件"
+  },
+  "_uln": {
+    "meaning": "_update_line_numbers",
+    "description": "更新行号显示"
+  },
+  "_hc": {
+    "meaning": "_highlight_code",
+    "description": "执行语法高亮"
+  },
+  "_ah": {
+    "meaning": "_auto_complete_helper",
+    "description": "自动补全辅助函数"
+  },
+  "_ic": {
+    "meaning": "_insert_completion",
+    "description": "插入补全内容"
+  },
+  "_gnp": {
+    "meaning": "_get_node_path",
+    "description": "获取树节点对应文件路径"
+  },
+  "_utc": {
+    "meaning": "_update_tree_children",
+    "description": "更新目录树子节点"
+  },
+  "_otf": {
+    "meaning": "_open_tree_file",
+    "description": "打开目录树中选中的文件"
+  },
+  "_lt": {
+    "meaning": "_load_tree",
+    "description": "加载目录结构到树视图"
+  },
+  "_stf": {
+    "meaning": "_save_to_file",
+    "description": "保存内容到文件"
+  },
+  "_hse": {
+    "meaning": "_handle_syntax_error",
+    "description": "处理语法错误"
+  },
+  "_ao": {
+    "meaning": "_append_output",
+    "description": "追加输出到控制台"
+  },
+  "_rc": {
+    "meaning": "_run_command",
+    "description": "执行系统命令"
+  },
+  "_ec": {
+    "meaning": "_execute_command",
+    "description": "在子线程中执行命令"
+  },
+  "_ctn": {
+    "meaning": "_create_tool_notebook",
+    "description": "创建工具面板笔记本"
+  },
+  "_cpmt": {
+    "meaning": "_create_package_manager_tab",
+    "description": "创建包管理标签页"
+  },
+  "_cct": {
+    "meaning": "_create_compile_tab",
+    "description": "创建编译选项标签页"
+  },
+  "_cot": {
+    "meaning": "_clear_output_text",
+    "description": "清空输出文本框"
+  },
+  "_cll": {
+    "meaning": "_clear_log_output",
+    "description": "清空日志输出"
+  },
+  "_os": {
+    "meaning": "_on_scroll",
+    "description": "处理滚动事件同步"
+  }
+}

@@ -155,7 +155,7 @@ class SimplePythonIDE:
         self.tm.add_command(label="编译选项", command=lambda: self.tt(1))
         self.mb.add_cascade(label="工具", menu=self.tm)
         self.hm = tk.Menu(self.mb, tearoff=0)
-        self.hm.add_command(label="打开官网", command=lambda: webbrowser.open("https://github.com/fuzhiyin-7/IDE"))
+        self.hm.add_command(label="打开官网", command=lambda: webbrowser.open("https://github.com/fuzhiyin-7/-7'sIDE"))
         self.mb.add_cascade(label="帮助", menu=self.hm)
         self.root.bind("<Control-z>", lambda e: self.undo())
         self.root.bind("<Control-y>", lambda e: self.redo())
@@ -360,11 +360,12 @@ class SimplePythonIDE:
             self._hc_d()
             return
         self.last_line_count = lc
-        lns = "\n".join(str(i) for i in range(1, lc + 1))
+        sp = self.lnb.yview()
         self.lnb.config(state="normal")
         self.lnb.delete("1.0", tk.END)
-        self.lnb.insert("1.0", lns)
+        self.lnb.insert("1.0", "\n".join(str(i) for i in range(1, lc + 1)))
         self.lnb.config(state="disabled")
+        self.lnb.yview_moveto(sp[0])
         self._hc_d()
 
     def _onscroll(self, e=None):

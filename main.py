@@ -155,7 +155,7 @@ class SimplePythonIDE:
         self.tm.add_command(label="编译选项", command=lambda: self.tt(1))
         self.mb.add_cascade(label="工具", menu=self.tm)
         self.hm = tk.Menu(self.mb, tearoff=0)
-        self.hm.add_command(label="打开官网", command=lambda: webbrowser.open("https://github.com/fuzhiyin-7/-7'sIDE"))
+        self.hm.add_command(label="打开官网", command=lambda: webbrowser.open("https://github.com/fuzhiyin-7/IDE"))
         self.mb.add_cascade(label="帮助", menu=self.hm)
         self.root.bind("<Control-z>", lambda e: self.undo())
         self.root.bind("<Control-y>", lambda e: self.redo())
